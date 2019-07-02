@@ -1,6 +1,6 @@
 ---
 layout: post
-author: jcpowermac, booxter
+author: jcpowermac, booxter, karmab
 description: In this post we will research and discover how KubeVirt networking functions
 navbar_active: Blogs
 pub-date: April 25
@@ -35,12 +35,12 @@ Add the Kubernetes repository
 
 Update and install prerequisites.
 
+    VERSION="1.15.0"
     yum update -y
-    yum install kubelet-1.9.4 \
-                kubeadm-1.9.4 \
-                kubectl-1.9.4 \
+    yum install kubelet-$VERSION \
+                kubeadm-$VERSION \
+                kubectl-$VERSION \
                 docker \
-                ansible \
                 git \
                 curl \
                 wget -y
@@ -60,8 +60,7 @@ For docker storage we will use a new disk `vdb` formatted XFS using the Overlay 
 
 Start and enable Docker
 
-    systemctl start docker
-    systemctl enable docker
+    systemctl enable --now docker
 
 ### Additional prerequisites
 
@@ -82,7 +81,7 @@ Temporarily disable selinux so we can run `kubeadm init`
 
     setenforce 0
 
-And let’s also permanently disable selinux - yes I know. If this isn’t done once you reboot your node kubernetes won’t start and then you will be wondering what happened :)
+And let’s also permanently disable selinux - yes I know. If this isn’t done, once you reboot, your node kubernetes won’t start and then you will be left wondering what happened :)
 
     cat <<EOF > /etc/selinux/config
     # This file controls the state of SELinux on the system.
@@ -116,7 +115,7 @@ Now we are ready to [create our cluster](https://kubernetes.io/docs/setup/indepe
 
 There are multiple CNI providers in this example environment just going to use Flannel since its simple to deploy and configure.
 
-    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/v0.9.1/Documentation/kube-flannel.yml
+    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/62e44c867a2846fefb68bd5f178daf4da3095ccb/Documentation/kube-flannel.yml
 
 After Flannel is deployed join the nodes to the cluster.
 
@@ -127,36 +126,38 @@ Once all the nodes have been joined check the status.
 
     $ kubectl get node
     NAME                  STATUS    ROLES     AGE       VERSION
-    km1.virtomation.com   Ready     master    11m       v1.9.4
-    kn1.virtomation.com   Ready     <none>    10m       v1.9.4
-    kn2.virtomation.com   Ready     <none>    10m       v1.9.4
+    km1.virtomation.com   Ready     master    11m       v1.15.0
+    kn1.virtomation.com   Ready     <none>    10m       v1.15.0
+    kn2.virtomation.com   Ready     <none>    10m       v1.15.0
 
 ## Additional Components
 
 ### [KubeVirt](http://www.kubevirt.io)
 ----------------------------------
 
-The recommended installation method is to use [kubevirt-ansible](https://github.com/kubevirt/kubevirt-ansible). For this example I don’t require storage so just deploying using `kubectl create`.
+The recommended installation method is to use the operator.
 
 For additional information regarding KubeVirt install see the [installation readme](http://www.kubevirt.io/user-guide/#/installation/README).
 
-    $ kubectl create -f https://github.com/kubevirt/kubevirt/releases/download/v0.4.1/kubevirt.yaml
-    serviceaccount "kubevirt-apiserver" created
+    $ kubectl create -f https://github.com/kubevirt/kubevirt/releases/download/v0.18.1/kubevirt-operator.yaml
+    $ kubectl create -f https://github.com/kubevirt/kubevirt/releases/download/v0.18.1/kubevirt-cr.yaml
 
     ... output ...
 
-    customresourcedefinition "offlinevirtualmachines.kubevirt.io" created
+    customresourcedefinition "virtualmachines.kubevirt.io" created
 
 Let’s make sure that all the pods are running.
 
-    $ kubectl get pod -n kube-system -l 'kubevirt.io'
-    NAME                               READY     STATUS    RESTARTS   AGE
-    virt-api-747745669-62cww           1/1       Running   0          4m
-    virt-api-747745669-qtn7f           1/1       Running   0          4m
-    virt-controller-648945bbcb-dfpwm   0/1       Running   0          4m
-    virt-controller-648945bbcb-tppgx   1/1       Running   0          4m
-    virt-handler-xlfc2                 1/1       Running   0          4m
-    virt-handler-z5lsh                 1/1       Running   0          4m
+    $ kubectl get pod -n kubevirt
+    NAME                               READY   STATUS    RESTARTS   AGE
+    virt-api-68cb6bc776-5ks6q          1/1     Running   0          9h
+    virt-api-68cb6bc776-kcrjm          1/1     Running   1          9h
+    virt-controller-764c65b94d-lfmjf   1/1     Running   0          9h
+    virt-controller-764c65b94d-pdxwt   1/1     Running   0          9h
+    virt-handler-9t8gc                 1/1     Running   0          9h
+    virt-handler-fsmf8                 1/1     Running   0          9h
+    virt-operator-6484fcbc66-9nj2f     1/1     Running   0          9h
+    virt-operator-6484fcbc66-shzjs     1/1     Running   0          9h
 
 ### Skydive
 
@@ -209,40 +210,25 @@ Let’s create a clean new namespace to use.
     $ kubectl create ns nodejs-ex
     namespace "nodejs-ex" created
 
-The `nodejs-ex.yaml` contains multiple objects. The definitions for our two virtual machines - mongodb and nodejs. Two Kubernetes `Services` and a one Kubernetes `Ingress` object. These instances will be created as offline virtual machines so after `kubectl create` we will start them up.
+The `nodejs-ex.yaml` contains multiple objects. The definitions for our two virtual machines - mongodb and nodejs. Two Kubernetes `Services` and a one Kubernetes `Ingress` object. These instances will be created as virtual machines so after `kubectl create` we will start them up.
 
     $ kubectl create -f https://raw.githubusercontent.com/jcpowermac/kubevirt-network-deepdive/master/kubernetes/nodejs-ex.yaml -n nodejs-ex
-    offlinevirtualmachine "nodejs" created
-    offlinevirtualmachine "mongodb" created
+    virtualmachine "nodejs" created
+    virtualmachine "mongodb" created
     service "mongodb" created
     service "nodejs" created
     ingress "nodejs" created
 
-Start the nodejs virtual machine
-
-    $ kubectl patch offlinevirtualmachine nodejs --type merge -p '{"spec":{"running":true}}' -n nodejs-ex
-    offlinevirtualmachine "nodejs" patched
-
-Start the mongodb virtual machine
-
-    $ kubectl patch offlinevirtualmachine mongodb --type merge -p '{"spec":{"running":true}}' -n nodejs-ex
-    offlinevirtualmachine "mongodb" patched
-
 Review kubevirt virtual machine objects
 
-    $ kubectl get ovms -n nodejs-ex
+    $ kubectl get vms -n nodejs-ex
     NAME      AGE
     mongodb   7m
     nodejs    7m
 
-    $ kubectl get vms -n nodejs-ex
-    NAME      AGE
-    mongodb   4m
-    nodejs    5m
-
 Where are the virtual machines and what is their IP address?
 
-    $ kubectl get pod -o wide -n nodejs-ex
+    $ kubectl get vmis -n nodejs-ex
     NAME                          READY     STATUS    RESTARTS   AGE       IP           NODE
     virt-launcher-mongodb-qdpmg   2/2       Running   0          4m        10.244.2.7   kn2.virtomation.com
     virt-launcher-nodejs-5r59c    2/2       Running   0          4m        10.244.1.8   kn1.virtomation.com
@@ -334,7 +320,6 @@ Now that we shown that kubernetes, kubevirt, ingress-nginx and flannel work toge
 ![KubeVirt networking]({{ "assets/images/diagram.png" | absolute_url }})
 
 ## virt-launcher - [virtwrap](https://github.com/kubevirt/kubevirt/tree/master/pkg/virt-launcher/virtwrap)
-
 
 virt-launcher is the pod that runs the necessary components instantiate and run a virtual machine. We are only going to concentrate on the network portion in this post.
 
